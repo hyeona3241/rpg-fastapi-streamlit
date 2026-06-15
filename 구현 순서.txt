@@ -1,0 +1,68 @@
+1. DB 스키마 수정/추가
+2. 더미 데이터 삽입
+3. FastAPI DB 연결 확인
+4. 회원가입 / 로그인 / 로그아웃
+5. 현재 로그인 유저 확인 API
+6. 캐릭터 생성 / 선택 / 조회
+7. 인벤토리 생성 / 조회
+8. 아이템 지급 테스트
+9. 스킬 장착
+10. 몬스터 전투
+11. 보상 지급 / 인벤토리 반영
+12. 퀘스트 수락 / 진행도 갱신
+13. 크래프팅
+14. 어드민 / 검색 / 부가 기능
+
+
+
+FastAPI 리팩토링
+app/
+│
+├── main.py
+├── database.py
+├── models/
+│   ├── user.py
+│   ├── character.py
+│   ├── item.py
+│   ├── battle.py
+│   └── crafting.py
+├── routers/
+│   ├── auth.py
+│   ├── characters.py
+│   ├── inventory.py
+│   ├── battle.py
+│   ├── quests.py
+│   └── crafting.py
+└── services/
+    ├── battle_service.py
+    ├── crafting_service.py
+    └── quest_service.py
+
+
+
+실제 구현 순서
+① DB 스키마 확장 및 테스트 데이터 준비
+        ↓
+② FastAPI 리팩토링 (models / routers 분리)
+        ↓
+③ Streamlit 탭 구조 생성
+        ↓
+④ 로그인 / 회원가입 유지
+        ↓
+⑤ 캐릭터 생성 + 종족 선택 + 캐릭터 선택
+        ↓
+⑥ 캐릭터 상세(스탯/스킬 표시)
+        ↓
+⑦ 인벤토리 조회
+        ↓
+⑧ 장비 장착
+        ↓
+⑨ 몬스터 턴제 전투
+        ↓
+⑩ 보상 지급 및 경험치 반영
+        ↓
+⑪ 퀘스트 수락 / 진행도
+        ↓
+⑫ 동적 크래프팅(프로젝트의 핵심 기능)
+        ↓
+⑬ 관리자 화면 및 검색 기능

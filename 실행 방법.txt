@@ -1,0 +1,4 @@
+1. create_db.sql 실행
+2. RPG.sql 실행
+3. populate_rpg.sql 실행
+4. upgrade_rpg_streamlit_schema.sql 실행
