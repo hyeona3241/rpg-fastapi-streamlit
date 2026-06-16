@@ -1,20 +1,12 @@
 import streamlit as st
-from utils.api import require_login, render_sidebar, request
+from utils.api import init_session_state, render_sidebar
 
-st.set_page_config(page_title="Quest", layout="wide")
+st.set_page_config(page_title="Coming Soon", layout="wide")
+init_session_state()
 render_sidebar()
-st.title("📜 Quest")
 
-if not require_login():
-    st.stop()
-
-if not st.session_state.get("selected_character"):
-    st.info("캐릭터를 먼저 선택해주세요.")
-    st.stop()
-
-st.info("NPC 목록 → 퀘스트 수락 → 진행도 확인 → 완료/보상 지급 순서로 구현합니다.")
-res = request("GET", "/quests/me")
-if res and res.status_code == 200:
-    st.json(res.json())
+st.title("준비 중")
+if not st.session_state.logged_in:
+    st.warning("로그인 후 사용할 수 있습니다.")
 else:
-    st.caption("아직 퀘스트 API가 연결되지 않았습니다.")
+    st.info("이 페이지는 다음 단계에서 구현합니다.")

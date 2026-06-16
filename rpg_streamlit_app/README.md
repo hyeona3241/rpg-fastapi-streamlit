@@ -2,38 +2,16 @@
 
 ## 실행 방법
 
-# 프로젝트 폴더로 이동
-cd MyRPG
-
-# 가상환경 생성
-python -m venv venv
-
-# 활성화 (CMD)
-venv\Scripts\activate
-
-# 활성화 (PowerShell)
-.\venv\Scripts\Activate.ps1
-
-# 패키지 설치
-pip install fastapi uvicorn sqlalchemy pymysql streamlit pandas requests
-
-# 설치 목록 저장
-pip freeze > requirements.txt
-
-
-
-## 실행 순서
-
-# 1. FastAPI 실행
-cd rpg_backend
-uvicorn backend_main_v1:app --host 127.0.0.1 --port 8001 --reload
-
-# 2. Streamlit 실행
+```bash
 cd rpg_streamlit_app
 streamlit run Home.py
+```
 
+FastAPI 서버는 별도 터미널에서 실행합니다.
 
-http://localhost:8501 에서 실행 확인
+```bash
+uvicorn backend_main_v1:app --reload
+```
 
 ## 현재 구현 범위
 

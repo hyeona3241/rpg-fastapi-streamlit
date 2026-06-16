@@ -1,4 +1,77 @@
 1. create_db.sql 실행
 2. RPG.sql 실행
 3. populate_rpg.sql 실행
-4. upgrade_rpg_streamlit_schema.sql 실행
+4. upgrade_rpg_streamlit_schema.sql 
+5. upgrade_rpg_streamlit_schema_safe.sql
+6. upgrade_character_inventory_crafting_schema.sql
+
+
+
+## 실행 방법
+
+# 프로젝트 폴더로 이동
+cd rpg-fastapi-streamlit
+
+# 가상환경 생성
+python -m venv venv
+
+# 활성화 (CMD)
+venv\Scripts\activate
+
+# 활성화 (PowerShell)
+.\venv\Scripts\Activate.ps1
+
+# 패키지 설치
+pip install fastapi uvicorn sqlalchemy pymysql streamlit pandas requests
+
+# 설치 목록 저장
+pip freeze > requirements.txt
+
+
+
+## 실행 순서
+
+# 1. FastAPI 실행
+cd rpg_backend
+uvicorn backend_main_v1:app --host 127.0.0.1 --port 8001 --reload
+
+# 2. Streamlit 실행
+cd rpg_streamlit_app
+streamlit run Home.py
+
+
+http://localhost:8501 에서 실행 확인
+
+
+
+
+
+// 구현 완료
+1. DB 기본 확장
+- User.role
+- User.active
+- Character.is_public
+- 추가 스키마 일부 적용
+
+2. 계정 기능
+- 회원가입
+- 로그인
+- 로그아웃
+- 계정 비활성화
+- 비활성 계정 로그인 차단
+- 관리자 계정 구분
+
+3. 관리자 기능 일부
+- 유저 목록 조회
+- 유저 검색/필터링
+- 비활성 계정 복구
+- 관리자 계정 비활성화 방지
+
+4. 캐릭터 기능
+- 캐릭터 생성
+- 캐릭터 목록 조회
+- 캐릭터 선택
+- 현재 선택 캐릭터 조회
+- 캐릭터 상세 조회
+- 공개/비공개 변경
+- 캐릭터 삭제

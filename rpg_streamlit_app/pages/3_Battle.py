@@ -1,21 +1,12 @@
 import streamlit as st
-from utils.api import require_login, render_sidebar, request
+from utils.api import init_session_state, render_sidebar
 
-st.set_page_config(page_title="Battle", layout="wide")
+st.set_page_config(page_title="Coming Soon", layout="wide")
+init_session_state()
 render_sidebar()
-st.title("⚔️ Battle")
 
-if not require_login():
-    st.stop()
-
-selected = st.session_state.get("selected_character")
-if not selected:
-    st.info("캐릭터를 먼저 선택해주세요.")
-    st.stop()
-
-st.info("몬스터 목록 조회 → 전투 시작 → 장착 스킬 공격 → 보상 지급 순서로 구현할 예정입니다.")
-res = request("GET", "/monsters")
-if res and res.status_code == 200:
-    st.json(res.json())
+st.title("준비 중")
+if not st.session_state.logged_in:
+    st.warning("로그인 후 사용할 수 있습니다.")
 else:
-    st.caption("아직 `/monsters` API가 연결되지 않았습니다.")
+    st.info("이 페이지는 다음 단계에서 구현합니다.")

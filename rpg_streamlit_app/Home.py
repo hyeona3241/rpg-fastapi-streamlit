@@ -77,6 +77,31 @@ def dashboard_view():
         st.info("내 계정 정보 API가 아직 연결되지 않았거나 세션이 만료되었습니다.")
 
     st.divider()
+    st.subheader("계정 비활성화")
+    st.warning(
+        "계정 비활성화 후에는 로그인할 수 없습니다. 데이터는 보존되며, 동일한 아이디로 재가입할 수 없습니다. "
+        "복구는 관리자 계정에서만 가능합니다."
+    )
+    if st.session_state.get("role") == "ADMIN":
+        st.info("관리자 계정은 안전을 위해 비활성화할 수 없습니다.")
+    else:
+        confirm = st.checkbox("위 내용을 이해했으며, 내 계정을 비활성화합니다.")
+        if st.button("내 계정 비활성화", disabled=not confirm, type="secondary"):
+            res = request("DELETE", "/users/me")
+            if res and res.status_code == 200:
+                st.success("계정이 비활성화되었습니다. 다시 로그인하려면 관리자 복구가 필요합니다.")
+                st.session_state.logged_in = False
+                st.session_state.user_id = None
+                st.session_state.user_name = None
+                st.session_state.role = "USER"
+                st.session_state.cookies = {}
+                st.session_state.selected_character_id = None
+                st.session_state.selected_character_name = None
+                st.rerun()
+            elif res is not None:
+                st.error(res.json().get("detail", "계정 비활성화에 실패했습니다."))
+
+    st.divider()
     st.subheader("내 캐릭터 요약")
     res = request("GET", "/characters/me")
     if res is None:
