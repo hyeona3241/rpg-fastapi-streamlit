@@ -3,6 +3,16 @@ import streamlit as st
 
 from utils.api import init_session_state, render_sidebar, request
 
+
+
+def safe_detail(res, default_msg: str) -> str:
+    if res is None:
+        return default_msg
+    try:
+        return res.json().get("detail", default_msg)
+    except Exception:
+        return res.text or f"HTTP {res.status_code}: {default_msg}"
+
 st.set_page_config(page_title="Inventory", layout="wide")
 init_session_state()
 render_sidebar()
@@ -23,7 +33,7 @@ def load_inventory():
         st.info("선택된 캐릭터가 없습니다. Character 페이지에서 캐릭터를 먼저 선택해주세요.")
         return None
     if res.status_code != 200:
-        st.error(res.json().get("detail", "인벤토리를 불러오지 못했습니다."))
+        st.error(safe_detail(res, "인벤토리를 불러오지 못했습니다."))
         return None
     return res.json()
 
@@ -68,7 +78,7 @@ for inv in inventories:
             show_cols = [
                 c for c in [
                     "item_id", "name", "type", "sub_type", "quantity", "rarity",
-                    "equipment_part", "required_level", "is_generated", "description",
+                    "equipment_part", "equipped", "equipped_part", "required_level", "is_generated", "description",
                 ] if c in df.columns
             ]
             st.dataframe(df[show_cols], use_container_width=True, hide_index=True)
@@ -100,6 +110,8 @@ with col_left:
         {"항목": "수량", "값": selected_item.get("quantity")},
         {"항목": "희귀도", "값": selected_item.get("rarity")},
         {"항목": "장비 부위", "값": selected_item.get("equipment_part")},
+        {"항목": "장착 여부", "값": selected_item.get("equipped")},
+        {"항목": "장착 슬롯", "값": selected_item.get("equipped_part")},
         {"항목": "요구 레벨", "값": selected_item.get("required_level")},
         {"항목": "AI 생성 아이템", "값": selected_item.get("is_generated")},
         {"항목": "설명", "값": selected_item.get("description")},
@@ -119,16 +131,19 @@ with col_right:
                 st.success(res.json().get("message", "아이템을 사용했습니다."))
                 st.rerun()
             elif res is not None:
-                st.error(res.json().get("detail", "아이템 사용 실패"))
+                st.error(safe_detail(res, "아이템 사용 실패"))
     else:
         st.caption("소비 아이템만 사용할 수 있습니다.")
 
-    if st.button("버리기", type="secondary", use_container_width=True):
+    if selected_item.get("equipped"):
+        st.caption("장착 중인 아이템은 버릴 수 없습니다. Equipment 페이지에서 먼저 해제하세요.")
+
+    if st.button("버리기", type="secondary", use_container_width=True, disabled=bool(selected_item.get("equipped"))):
         res = request("POST", f"/inventory/items/{selected_item['item_id']}/discard", json={"quantity": int(qty)})
         if res and res.status_code == 200:
             st.success(res.json().get("message", "아이템을 버렸습니다."))
             st.rerun()
         elif res is not None:
-            st.error(res.json().get("detail", "아이템 버리기 실패"))
+            st.error(safe_detail(res, "아이템 버리기 실패"))
 
 st.info("아이템 획득은 이후 몬스터 전투/퀘스트 보상과 연결할 예정이며, 지금은 Admin 페이지에서 테스트 지급할 수 있습니다.")

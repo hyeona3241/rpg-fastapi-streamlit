@@ -4,6 +4,9 @@
 4. upgrade_rpg_streamlit_schema.sql 
 5. upgrade_rpg_streamlit_schema_safe.sql
 6. upgrade_character_inventory_crafting_schema.sql
+7. seed_item_effects_hp_mp.sql
+8. seed_reward_exp_equipment_safe.sql
+9. seed_quest_demo.sql
 
 
 
@@ -43,7 +46,7 @@ streamlit run Home.py
 http://localhost:8501 에서 실행 확인
 
 
-
+아이템 장착시 알림 두번오는 오류
 
 
 // 구현 완료

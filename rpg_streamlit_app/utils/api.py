@@ -65,6 +65,39 @@ def render_sidebar() -> None:
             st.sidebar.success(f"현재 캐릭터: {st.session_state.selected_character_name}")
         else:
             st.sidebar.info("현재 선택 캐릭터 없음")
+
+        # 현재 선택 캐릭터의 HP/MP를 모든 페이지에서 바로 확인할 수 있게 표시한다.
+        res = request("GET", "/characters/current/resources")
+        if res is not None and res.status_code == 200:
+            data = res.json()
+            character = data.get("character", {})
+            resources = data.get("resources", {})
+            st.session_state.selected_character_id = character.get("actor_id")
+            st.session_state.selected_character_name = character.get("character_name")
+
+            level = int(character.get("level", 1) or 1)
+            exp = int(character.get("exp", 0) or 0)
+            exp_to_next = character.get("exp_to_next")
+            hp = int(resources.get("hp", 0))
+            max_hp = max(1, int(resources.get("max_hp", 1)))
+            mp = int(resources.get("mp", 0))
+            max_mp = max(1, int(resources.get("max_mp", 1)))
+
+            st.sidebar.markdown("### 상태")
+            st.sidebar.metric("Level", level)
+            if exp_to_next:
+                exp_to_next = max(1, int(exp_to_next))
+                st.sidebar.write(f"EXP: {exp} / {exp_to_next}")
+                st.sidebar.progress(max(0.0, min(1.0, exp / exp_to_next)))
+            else:
+                st.sidebar.write(f"EXP: {exp}")
+            st.sidebar.metric("HP", f"{hp} / {max_hp}")
+            st.sidebar.progress(max(0.0, min(1.0, hp / max_hp)))
+            st.sidebar.metric("MP", f"{mp} / {max_mp}")
+            st.sidebar.progress(max(0.0, min(1.0, mp / max_mp)))
+        elif res is not None and res.status_code == 404:
+            pass
+
         st.sidebar.button("로그아웃", on_click=logout)
     else:
         st.sidebar.info("로그인이 필요합니다.")

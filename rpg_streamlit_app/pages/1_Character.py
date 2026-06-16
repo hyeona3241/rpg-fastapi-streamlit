@@ -3,6 +3,16 @@ import streamlit as st
 
 from utils.api import init_session_state, render_sidebar, request
 
+
+
+def safe_detail(res, default_msg: str) -> str:
+    if res is None:
+        return default_msg
+    try:
+        return res.json().get("detail", default_msg)
+    except Exception:
+        return res.text or f"HTTP {res.status_code}: {default_msg}"
+
 st.set_page_config(page_title="Character", layout="wide")
 init_session_state()
 render_sidebar()
@@ -146,7 +156,7 @@ with tab_detail:
     if detail_res is None:
         st.stop()
     if detail_res.status_code != 200:
-        st.error(detail_res.json().get("detail", "상세 정보를 불러오지 못했습니다."))
+        st.error(safe_detail(detail_res, "상세 정보를 불러오지 못했습니다."))
         st.stop()
 
     detail = detail_res.json()
@@ -169,11 +179,41 @@ with tab_detail:
             st.info("종족 정보가 없습니다.")
 
         st.write("스탯")
-        stats = detail.get("stats", {})
-        if stats:
-            st.dataframe(pd.DataFrame([{"stat": k, "value": v} for k, v in stats.items()]), use_container_width=True, hide_index=True)
+        final_stats = detail.get("final_stats") or {}
+        if final_stats:
+            base = final_stats.get("base", {})
+            bonus = final_stats.get("equipment_bonus", {})
+            final = final_stats.get("final", {})
+            rows = []
+            for stat in sorted(set(base) | set(bonus) | set(final)):
+                rows.append({
+                    "stat": stat,
+                    "base": base.get(stat, 0),
+                    "equipment_bonus": bonus.get(stat, 0),
+                    "final": final.get(stat, 0),
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
-            st.info("스탯 정보가 없습니다.")
+            stats = detail.get("stats", {})
+            if stats:
+                st.dataframe(pd.DataFrame([{"stat": k, "value": v} for k, v in stats.items()]), use_container_width=True, hide_index=True)
+            else:
+                st.info("스탯 정보가 없습니다.")
+
+        st.write("장착 장비")
+        equipment = detail.get("equipment", [])
+        if equipment:
+            equip_rows = []
+            for eq in equipment:
+                equip_rows.append({
+                    "slot": eq.get("equipment_part"),
+                    "item_id": eq.get("item_id"),
+                    "name": eq.get("name"),
+                    "bonuses": eq.get("bonuses"),
+                })
+            st.dataframe(pd.DataFrame(equip_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("장착한 장비가 없습니다.")
 
     with col_right:
         st.write("보유 스킬")
