@@ -32,6 +32,42 @@ pip freeze > requirements.txt
 
 
 
+
+#AI 모델 학습
+
+필요 패키지 설치:
+
+```bash
+pip install -r requirements_ai.txt
+
+```
+
+ Setup
+
+```bash
+cd rpg_backend
+pip install -r ../requirements_ai.txt
+copy .env.example .env
+```
+
+
+모델 재학습:
+
+```bash
+cd rpg_backend
+python -m crafting_ai.train_crafting_model --dataset crafting_ai/data/generated_crafting_dataset_rule_llm_2000.xlsx
+```
+
+예측 테스트:
+
+```bash
+cd rpg_backend
+python -m crafting_ai.test_predictor
+```
+
+
+
+
 ## 실행 순서
 
 # 1. FastAPI 실행

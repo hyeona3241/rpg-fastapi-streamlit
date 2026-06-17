@@ -16,6 +16,10 @@ env/
 
 # Environment variables
 .env
+*.env
+
+*.pyc
+
 
 # Logs
 *.log

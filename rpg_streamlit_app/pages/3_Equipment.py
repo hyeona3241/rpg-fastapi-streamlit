@@ -128,15 +128,26 @@ selected_item = item_options[selected_label]
 slot_default = selected_item.get("equipment_part") or selected_item.get("sub_type") or "weapon"
 slot = st.text_input("장착 슬롯", value=str(slot_default).lower())
 
-if selected_item.get("equipped"):
-    st.info(f"이미 {selected_item.get('equipped_part')} 슬롯에 장착 중인 아이템입니다. 다른 슬롯에 장착하려면 먼저 해제해주세요.")
+occupied_slots = {eq.get("equipment_part"): eq for eq in equipment}
 
-if st.button("장착", type="primary", use_container_width=True):
+if selected_item.get("equipped"):
+    st.success(f"현재 {selected_item.get('equipped_part')} 슬롯에 장착 중인 아이템입니다.")
+    can_equip = False
+else:
+    can_equip = True
+    if slot in occupied_slots:
+        current = occupied_slots[slot]
+        st.warning(f"{slot} 슬롯에는 현재 '{current.get('name')}' 장비가 장착되어 있습니다. 장착하면 해당 슬롯의 장비가 교체됩니다.")
+
+if st.button("장착 / 교체", type="primary", use_container_width=True, disabled=not can_equip):
     res = request("POST", "/equipment/equip", json={"item_id": int(selected_item["item_id"]), "equipment_part": slot})
     if res and res.status_code == 200:
-        st.success(res.json().get("message", "장비를 장착했습니다."))
+        st.session_state["equipment_message"] = res.json().get("message", "장비를 장착했습니다.")
         st.rerun()
     elif res is not None:
         st.error(safe_detail(res, "장비 장착 실패"))
+
+if "equipment_message" in st.session_state:
+    st.success(st.session_state.pop("equipment_message"))
 
 st.info("전투 중에는 장비 장착/해제가 제한됩니다. 장비 보너스는 캐릭터 상세와 전투 데미지 계산에 반영됩니다.")

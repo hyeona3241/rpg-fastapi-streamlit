@@ -1,0 +1,7 @@
+pandas
+openpyxl
+scikit-learn
+joblib
+numpy
+python-dotenv
+openai

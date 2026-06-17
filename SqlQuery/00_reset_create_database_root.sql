@@ -1,3 +1,10 @@
+-- ============================================================
+-- 00_reset_create_database_root.sql
+-- Purpose: Reset MyRPG database and create rpg/rpg account.
+-- Run with root:
+--   mysql -u root -p < 00_reset_create_database_root.sql
+-- ============================================================
+
 -- mysql -u root -pbitnami mysql < create_db.sql
 
 use mysql;

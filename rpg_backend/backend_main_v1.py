@@ -267,6 +267,63 @@ class ItemEffectModel(Base):
     explosion_damage = Column(Integer, nullable=False, default=0)
 
 
+
+
+class ItemAttributeModel(Base):
+    __tablename__ = "ItemAttribute"
+    item_id = Column(Integer, ForeignKey("Item.id"), primary_key=True)
+    toxic = Column(Float, nullable=False, default=0)
+    healing = Column(Float, nullable=False, default=0)
+    viscous = Column(Float, nullable=False, default=0)
+    stable = Column(Float, nullable=False, default=0)
+    organic = Column(Float, nullable=False, default=0)
+    plant = Column(Float, nullable=False, default=0)
+    unstable = Column(Float, nullable=False, default=0)
+    burnt = Column(Float, nullable=False, default=0)
+    neutral = Column(Float, nullable=False, default=0)
+    pure = Column(Float, nullable=False, default=0)
+    metallic = Column(Float, nullable=False, default=0)
+    magical = Column(Float, nullable=False, default=0)
+    cold = Column(Float, nullable=False, default=0)
+    hot = Column(Float, nullable=False, default=0)
+    electric = Column(Float, nullable=False, default=0)
+    explosive = Column(Float, nullable=False, default=0)
+    fragile = Column(Float, nullable=False, default=0)
+    dense = Column(Float, nullable=False, default=0)
+    dark = Column(Float, nullable=False, default=0)
+    holy = Column(Float, nullable=False, default=0)
+    sharp = Column(Float, nullable=False, default=0)
+    defensive = Column(Float, nullable=False, default=0)
+
+
+class CraftingMethodModel(Base):
+    __tablename__ = "CraftingMethod"
+    method = Column(String(50), primary_key=True)
+    description = Column(Text)
+
+
+class CraftingRecipeModel(Base):
+    __tablename__ = "CraftingRecipe"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ingredient1_id = Column(Integer, ForeignKey("Item.id"), nullable=False)
+    ingredient2_id = Column(Integer, ForeignKey("Item.id"), nullable=False)
+    method = Column(String(50), ForeignKey("CraftingMethod.method"), nullable=False)
+    result_item_id = Column(Integer, ForeignKey("Item.id"), nullable=False)
+    created_by_ai = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class CraftingLogModel(Base):
+    __tablename__ = "CraftingLog"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    char_id = Column(Integer, ForeignKey("Character.actor_id"), nullable=False)
+    recipe_id = Column(Integer, ForeignKey("CraftingRecipe.id"), nullable=False)
+    ingredient1_id = Column(Integer, ForeignKey("Item.id"), nullable=False)
+    ingredient2_id = Column(Integer, ForeignKey("Item.id"), nullable=False)
+    method = Column(String(50), ForeignKey("CraftingMethod.method"), nullable=False)
+    result_item_id = Column(Integer, ForeignKey("Item.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
 class BattleSessionModel(Base):
     __tablename__ = "BattleSession"
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -312,6 +369,10 @@ class UserActiveUpdate(BaseModel):
     active: bool
 
 
+class AdminBattleStatusUpdate(BaseModel):
+    status: str = "ABANDONED"
+
+
 class QuantityPayload(BaseModel):
     quantity: int = Field(gt=0)
 
@@ -346,6 +407,12 @@ class BattleStartPayload(BaseModel):
 class BattleAttackPayload(BaseModel):
     battle_id: int
     skill_id: int
+
+
+class CraftingPayload(BaseModel):
+    ingredient1_id: int
+    ingredient2_id: int
+    method: str
 
 
 class SpecimenResponse(BaseModel):
@@ -818,6 +885,331 @@ def serialize_battle(db: Session, battle: BattleSessionModel) -> dict:
             "max_mp": resources["max_mp"],
         },
     }
+
+
+CRAFTING_ATTRIBUTES = [
+    "toxic", "healing", "viscous", "stable", "organic", "plant", "unstable", "burnt",
+    "neutral", "pure", "metallic", "magical", "cold", "hot", "electric", "explosive",
+    "fragile", "dense", "dark", "holy", "sharp", "defensive",
+]
+
+
+def normalize_crafting_ingredients(item1_id: int, item2_id: int) -> tuple[int, int]:
+    return (item1_id, item2_id) if item1_id <= item2_id else (item2_id, item1_id)
+
+
+def get_item_attribute_dict(db: Session, item_id: int) -> dict[str, float]:
+    row = db.query(ItemAttributeModel).filter(ItemAttributeModel.item_id == item_id).first()
+    if not row:
+        return {attr: 0.0 for attr in CRAFTING_ATTRIBUTES}
+    return {attr: float(getattr(row, attr, 0) or 0) for attr in CRAFTING_ATTRIBUTES}
+
+
+def ensure_default_crafting_methods(db: Session) -> None:
+    defaults = {
+        "MIX": "재료를 단순히 섞어 제작합니다.",
+        "BOIL": "재료를 끓여 추출하거나 변화시킵니다.",
+        "BAKE": "재료를 가열하여 굽습니다.",
+        "DISTILL": "재료를 증류하여 핵심 성분을 추출합니다.",
+        "COMPRESS": "재료를 압축하여 밀도를 높입니다.",
+        "INFUSE": "재료에 마력 또는 속성을 주입합니다.",
+    }
+    for method, description in defaults.items():
+        exists = db.query(CraftingMethodModel).filter(CraftingMethodModel.method == method).first()
+        if not exists:
+            db.add(CraftingMethodModel(method=method, description=description))
+    db.flush()
+
+
+def get_owned_inventory_item(db: Session, char_id: int, item_id: int):
+    return (
+        db.query(InventoryItemModel, InventoryModel, ItemModel)
+        .join(InventoryModel, InventoryItemModel.inventory_id == InventoryModel.id)
+        .join(ItemModel, InventoryItemModel.item_id == ItemModel.id)
+        .filter(InventoryModel.owner_id == char_id, InventoryItemModel.item_id == item_id)
+        .first()
+    )
+
+
+def get_crafting_type_and_effect(attrs: dict[str, float], method: str) -> tuple[str, dict[str, int]]:
+    method = method.upper()
+    healing_score = attrs.get("healing", 0) + attrs.get("pure", 0) + attrs.get("holy", 0)
+    poison_score = attrs.get("toxic", 0) + attrs.get("dark", 0)
+    attack_score = attrs.get("sharp", 0) + attrs.get("metallic", 0) + attrs.get("hot", 0) + attrs.get("electric", 0)
+    defense_score = attrs.get("defensive", 0) + attrs.get("stable", 0) + attrs.get("dense", 0)
+    explosive_score = attrs.get("explosive", 0) + attrs.get("unstable", 0)
+
+    method_bonus = {
+        "BOIL": ("healing", 2),
+        "DISTILL": ("toxic", 2),
+        "BAKE": ("hot", 2),
+        "COMPRESS": ("dense", 2),
+        "INFUSE": ("magical", 2),
+        "MIX": ("stable", 1),
+    }.get(method)
+    if method_bonus:
+        attrs[method_bonus[0]] = attrs.get(method_bonus[0], 0) + method_bonus[1]
+
+    # Recompute after method modifier.
+    healing_score = attrs.get("healing", 0) + attrs.get("pure", 0) + attrs.get("holy", 0)
+    poison_score = attrs.get("toxic", 0) + attrs.get("dark", 0)
+    attack_score = attrs.get("sharp", 0) + attrs.get("metallic", 0) + attrs.get("hot", 0) + attrs.get("electric", 0)
+    defense_score = attrs.get("defensive", 0) + attrs.get("stable", 0) + attrs.get("dense", 0)
+    explosive_score = attrs.get("explosive", 0) + attrs.get("unstable", 0)
+
+    scores = {
+        "회복형": healing_score,
+        "독성형": poison_score,
+        "공격형": attack_score,
+        "방어형": defense_score,
+        "폭발형": explosive_score,
+    }
+    effect_type = max(scores, key=scores.get)
+    base_power = max(3, int(round(max(scores.values()) * 8 + 5)))
+    duration = max(3, int(round(attrs.get("viscous", 0) + attrs.get("stable", 0) + 3)))
+
+    effect = {
+        "hp": 0, "poison": 0, "duration": duration, "attack": 0, "defense": 0,
+        "speed": 0, "resistance": 0, "burn": 0, "freeze": 0, "shock": 0, "explosion_damage": 0,
+    }
+    if effect_type == "회복형":
+        effect["hp"] = min(120, base_power * 2)
+        effect["resistance"] = int(attrs.get("holy", 0) + attrs.get("pure", 0))
+    elif effect_type == "독성형":
+        effect["poison"] = min(60, base_power)
+    elif effect_type == "공격형":
+        effect["attack"] = min(40, base_power)
+        effect["burn"] = int(attrs.get("hot", 0) * 5)
+        effect["shock"] = int(attrs.get("electric", 0) * 5)
+        effect["freeze"] = int(attrs.get("cold", 0) * 5)
+    elif effect_type == "방어형":
+        effect["defense"] = min(40, base_power)
+        effect["resistance"] = min(40, int(defense_score * 6))
+    else:
+        effect["explosion_damage"] = min(120, base_power * 2)
+        effect["burn"] = int(attrs.get("hot", 0) * 4)
+    return effect_type, effect
+
+
+def build_generated_item_text(item1: ItemModel, item2: ItemModel, method: str, effect_type: str) -> tuple[str, str]:
+    method_kr = {
+        "MIX": "혼합", "BOIL": "끓이기", "BAKE": "굽기", "DISTILL": "증류",
+        "COMPRESS": "압축", "INFUSE": "주입",
+    }.get(method.upper(), method.upper())
+    suffix = {
+        "회복형": "회복약", "독성형": "독액", "공격형": "전투약",
+        "방어형": "보호제", "폭발형": "폭탄", "속성형": "결정",
+    }.get(effect_type, "제작품")
+    prefix = {
+        "회복형": "정화", "독성형": "맹독", "공격형": "격전",
+        "방어형": "수호", "폭발형": "폭발", "속성형": "마력",
+    }.get(effect_type, "AI")
+    # Keep emergency fallback names compact; ingredient names stay in the description.
+    name = f"{prefix} {suffix}"[:24]
+    note = f"{item1.name}와 {item2.name}을(를) {method_kr} 방식으로 조합해 만든 {effect_type} 아이템입니다."
+    return name, note
+
+
+METHOD_NAME_PREFIX = {
+    "MIX": "혼합",
+    "BOIL": "끓인",
+    "BAKE": "구운",
+    "DISTILL": "정제",
+    "COMPRESS": "압축",
+    "INFUSE": "주입",
+}
+
+TYPE_NAME_SUFFIX = {
+    "회복형": "회복약",
+    "독성형": "독액",
+    "공격형": "전투약",
+    "방어형": "보호제",
+    "폭발형": "폭탄",
+    "속성형": "결정",
+}
+
+
+def compact_item_name(name: str, max_len: int = 24) -> str:
+    """Inventory-friendly item name cleanup.
+
+    LLM/fallback names can occasionally repeat words or exceed the UI width.
+    This function keeps only a short, readable name before DB insertion.
+    """
+    import re
+
+    words = [w for w in re.split(r"\s+", str(name or "").replace("\n", " ").strip()) if w]
+    cleaned_words: list[str] = []
+    for word in words:
+        if cleaned_words and cleaned_words[-1] == word:
+            continue
+        if word in cleaned_words and len(word) >= 2:
+            continue
+        cleaned_words.append(word)
+    cleaned = " ".join(cleaned_words).strip()
+    if not cleaned:
+        cleaned = "AI 제작품"
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].strip()
+    return cleaned or "AI 제작품"
+
+
+def make_unique_item_name(db: Session, base_name: str, method: str, effect_type: str, max_len: int = 24) -> tuple[str, dict]:
+    """Return a unique item name for newly generated crafting results.
+
+    Different recipes can share the same predicted effect, so LLM/fallback names
+    may collide. Before inserting Item, check existing Item names and add method
+    information or a short roman suffix when needed.
+    """
+    base = compact_item_name(base_name, max_len=max_len)
+    method_key = (method or "").upper().strip()
+    method_prefix = METHOD_NAME_PREFIX.get(method_key, method_key or "제작")
+    type_suffix = TYPE_NAME_SUFFIX.get(effect_type, "제작품")
+
+    def exists(candidate: str) -> bool:
+        return db.query(ItemModel.id).filter(ItemModel.name == candidate).first() is not None
+
+    candidates: list[str] = [base]
+
+    # Prefer names that clearly show the crafting method when the original name collides.
+    for candidate in [
+        f"{method_prefix} {base}",
+        f"{method_prefix} {type_suffix}",
+        f"{method_prefix}{type_suffix}",
+    ]:
+        candidate = compact_item_name(candidate, max_len=max_len)
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    roman = ["II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+    for suffix in roman:
+        candidate = compact_item_name(f"{base} {suffix}", max_len=max_len)
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        if not exists(candidate):
+            return candidate, {
+                "original_name": base_name,
+                "final_name": candidate,
+                "changed": candidate != base,
+                "reason": "duplicate_item_name" if candidate != base else "unique",
+                "method_prefix": method_prefix,
+                "effect_type": effect_type,
+            }
+
+    # Extremely unlikely final fallback. Include a DB-independent increment.
+    for idx in range(2, 1000):
+        candidate = compact_item_name(f"{method_prefix} {type_suffix} {idx}", max_len=max_len)
+        if not exists(candidate):
+            return candidate, {
+                "original_name": base_name,
+                "final_name": candidate,
+                "changed": True,
+                "reason": "numbered_fallback",
+                "method_prefix": method_prefix,
+                "effect_type": effect_type,
+            }
+
+    return compact_item_name(f"{method_prefix} 제작품", max_len=max_len), {
+        "original_name": base_name,
+        "final_name": compact_item_name(f"{method_prefix} 제작품", max_len=max_len),
+        "changed": True,
+        "reason": "last_resort",
+        "method_prefix": method_prefix,
+        "effect_type": effect_type,
+    }
+
+
+def create_generated_crafting_result(db: Session, item1: ItemModel, item2: ItemModel, method: str) -> tuple[ItemModel, dict, dict, str, dict]:
+    """Create a new crafting result item and return an AI debug payload.
+
+    The debug payload is intentionally serializable so Streamlit can show the
+    generation process: input attributes, method modifier, model source, raw
+    prediction/fallback output, and final post-processed effects.
+    """
+    attrs1 = get_item_attribute_dict(db, item1.id)
+    attrs2 = get_item_attribute_dict(db, item2.id)
+    model_source = "fallback"
+    ai_error = None
+
+    try:
+        from crafting_ai.crafting_predictor import predict_crafting_result, merge_attributes, apply_method_modifier, normalize_method
+
+        method_norm = normalize_method(method)
+        merged_before_method = merge_attributes(attrs1, attrs2)
+        merged = apply_method_modifier(merged_before_method, method_norm)
+        prediction = predict_crafting_result(
+            ingredient1_name=item1.name,
+            ingredient2_name=item2.name,
+            method=method,
+            ingredient1_attributes=attrs1,
+            ingredient2_attributes=attrs2,
+        )
+        merged = {attr: float(prediction.attributes.get(attr, 0) or 0) for attr in CRAFTING_ATTRIBUTES}
+        effect_type = prediction.type_effect
+        effect = {
+            "hp": 0, "poison": 0, "duration": 0, "attack": 0, "defense": 0,
+            "speed": 0, "resistance": 0, "burn": 0, "freeze": 0, "shock": 0, "explosion_damage": 0,
+        }
+        effect.update({k: int(v or 0) for k, v in prediction.effects.items() if k in effect})
+        name = prediction.item_name
+        description = f"[AI:{prediction.source}|TEXT:{getattr(prediction, 'text_source', 'rule')}] {prediction.item_note}"
+        model_source = prediction.source
+        text_source = getattr(prediction, 'text_source', 'rule')
+        llm_debug = getattr(prediction, 'llm_debug', None)
+    except Exception as exc:
+        ai_error = str(exc)
+        merged_before_method = {attr: round((float(attrs1.get(attr, 0) or 0) + float(attrs2.get(attr, 0) or 0)) / 2, 3) for attr in CRAFTING_ATTRIBUTES}
+        merged = dict(merged_before_method)
+        effect_type, effect = get_crafting_type_and_effect(merged, method)
+        name, description = build_generated_item_text(item1, item2, method, effect_type)
+        description = f"[AI:fallback|TEXT:rule] {description}"
+        text_source = "rule_fallback"
+        llm_debug = {"provider": "none", "used": False, "fallback_used": True, "error": ai_error}
+
+    original_generated_name = name
+    name, unique_name_debug = make_unique_item_name(db, name, method, effect_type)
+
+    ai_debug = {
+        "is_ai_generated": True,
+        "recipe_source": "new_ai_prediction",
+        "model_source": model_source,
+        "text_source": text_source,
+        "ai_error": ai_error,
+        "llm_debug": llm_debug,
+        "ingredients": [
+            {"item_id": item1.id, "name": item1.name, "attributes": attrs1},
+            {"item_id": item2.id, "name": item2.name, "attributes": attrs2},
+        ],
+        "method": method.upper(),
+        "merged_attributes_before_method": merged_before_method,
+        "final_input_attributes": merged,
+        "predicted_type_effect": effect_type,
+        "post_processed_effects": effect,
+        "generated_text": {
+            "original_name": original_generated_name,
+            "name": name,
+            "description": description,
+            "unique_name": unique_name_debug,
+        },
+    }
+
+    result_item = ItemModel(
+        name=name,
+        description=description,
+        type="consumable",
+        sub_type="crafted",
+        capacity=-1,
+        rarity="CRAFTED",
+        is_generated=True,
+    )
+    db.add(result_item)
+    db.flush()
+
+    db.add(ItemAttributeModel(item_id=result_item.id, **{attr: float(merged.get(attr, 0)) for attr in CRAFTING_ATTRIBUTES}))
+    db.add(ItemEffectModel(item_id=result_item.id, type_effect=effect_type, **effect))
+    db.flush()
+    return result_item, merged, effect, effect_type, ai_debug
 
 
 # =========================
@@ -1835,6 +2227,237 @@ def complete_quest(quest_id: int, current_user=Depends(require_user), db: Sessio
 
 
 # =========================
+# Crafting
+# =========================
+@app.get("/crafting/methods", tags=["Crafting"])
+def get_crafting_methods(current_user=Depends(require_user), db: Session = Depends(get_db)):
+    ensure_default_crafting_methods(db)
+    db.commit()
+    rows = db.query(CraftingMethodModel).order_by(CraftingMethodModel.method.asc()).all()
+    return [{"method": row.method, "description": row.description} for row in rows]
+
+
+@app.get("/crafting/materials", tags=["Crafting"])
+def get_crafting_materials(current_user=Depends(require_user), db: Session = Depends(get_db)):
+    character = get_active_character(db, current_user["id"])
+    if not character:
+        raise HTTPException(status_code=404, detail="선택된 캐릭터가 없습니다.")
+
+    inventories = db.query(InventoryModel).filter(InventoryModel.owner_id == character.actor_id).all()
+    inventory_ids = [inv.id for inv in inventories]
+    if not inventory_ids:
+        return {"character": {"actor_id": character.actor_id, "character_name": character.character_name}, "materials": []}
+
+    rows = (
+        db.query(InventoryItemModel.item_id, InventoryItemModel.quantity, ItemModel.name, ItemModel.description, ItemModel.type, ItemModel.sub_type, ItemModel.rarity)
+        .join(ItemModel, InventoryItemModel.item_id == ItemModel.id)
+        .filter(InventoryItemModel.inventory_id.in_(inventory_ids), InventoryItemModel.quantity > 0)
+        .order_by(ItemModel.type.asc(), ItemModel.name.asc())
+        .all()
+    )
+
+    materials = []
+    for row in rows:
+        item_type = str(row.type or "").lower()
+        sub_type = str(row.sub_type or "").lower()
+        # material은 기본 재료, crafted 결과도 추가 조합 재료로 재사용 가능하게 허용한다.
+        if item_type in {"material", "consumable"} and sub_type not in {"potion"}:
+            attrs = get_item_attribute_dict(db, row.item_id)
+            materials.append({
+                "item_id": row.item_id,
+                "name": row.name,
+                "description": row.description,
+                "type": row.type,
+                "sub_type": row.sub_type,
+                "rarity": row.rarity,
+                "quantity": int(row.quantity or 0),
+                "attributes": attrs,
+            })
+    return {"character": {"actor_id": character.actor_id, "character_name": character.character_name}, "materials": materials}
+
+
+def serialize_crafting_recipe(db: Session, recipe: CraftingRecipeModel) -> dict:
+    item1 = db.query(ItemModel).filter(ItemModel.id == recipe.ingredient1_id).first()
+    item2 = db.query(ItemModel).filter(ItemModel.id == recipe.ingredient2_id).first()
+    result = db.query(ItemModel).filter(ItemModel.id == recipe.result_item_id).first()
+    effect = db.query(ItemEffectModel).filter(ItemEffectModel.item_id == recipe.result_item_id).first()
+    return {
+        "recipe_id": recipe.id,
+        "ingredient1_id": recipe.ingredient1_id,
+        "ingredient1_name": item1.name if item1 else f"Item {recipe.ingredient1_id}",
+        "ingredient2_id": recipe.ingredient2_id,
+        "ingredient2_name": item2.name if item2 else f"Item {recipe.ingredient2_id}",
+        "method": recipe.method,
+        "result_item_id": recipe.result_item_id,
+        "result_item_name": result.name if result else f"Item {recipe.result_item_id}",
+        "result_description": result.description if result else None,
+        "created_by_ai": bool(recipe.created_by_ai),
+        "created_at": str(recipe.created_at) if recipe.created_at else None,
+        "effect": {
+            "type_effect": effect.type_effect,
+            "hp": effect.hp,
+            "poison": effect.poison,
+            "duration": effect.duration,
+            "attack": effect.attack,
+            "defense": effect.defense,
+            "speed": effect.speed,
+            "resistance": effect.resistance,
+            "burn": effect.burn,
+            "freeze": effect.freeze,
+            "shock": effect.shock,
+            "explosion_damage": effect.explosion_damage,
+        } if effect else None,
+    }
+
+
+@app.get("/crafting/recipes", tags=["Crafting"])
+def get_crafting_recipes(current_user=Depends(require_user), db: Session = Depends(get_db)):
+    recipes = db.query(CraftingRecipeModel).order_by(CraftingRecipeModel.id.desc()).limit(100).all()
+    return [serialize_crafting_recipe(db, recipe) for recipe in recipes]
+
+
+@app.get("/crafting/history", tags=["Crafting"])
+def get_crafting_history(current_user=Depends(require_user), db: Session = Depends(get_db)):
+    character = get_active_character(db, current_user["id"])
+    if not character:
+        raise HTTPException(status_code=404, detail="선택된 캐릭터가 없습니다.")
+    rows = db.query(CraftingLogModel).filter(CraftingLogModel.char_id == character.actor_id).order_by(CraftingLogModel.created_at.desc()).limit(50).all()
+    result = []
+    for log in rows:
+        recipe = db.query(CraftingRecipeModel).filter(CraftingRecipeModel.id == log.recipe_id).first()
+        item1 = db.query(ItemModel).filter(ItemModel.id == log.ingredient1_id).first()
+        item2 = db.query(ItemModel).filter(ItemModel.id == log.ingredient2_id).first()
+        output = db.query(ItemModel).filter(ItemModel.id == log.result_item_id).first()
+        result.append({
+            "log_id": log.id,
+            "recipe_id": log.recipe_id,
+            "ingredient1_name": item1.name if item1 else f"Item {log.ingredient1_id}",
+            "ingredient2_name": item2.name if item2 else f"Item {log.ingredient2_id}",
+            "method": log.method,
+            "result_item_name": output.name if output else f"Item {log.result_item_id}",
+            "created_at": str(log.created_at) if log.created_at else None,
+            "recipe_created_by_ai": bool(recipe.created_by_ai) if recipe else None,
+        })
+    return result
+
+
+@app.post("/crafting/craft", tags=["Crafting"])
+def craft_item(payload: CraftingPayload, current_user=Depends(require_user), db: Session = Depends(get_db)):
+    character = get_active_character(db, current_user["id"])
+    if not character:
+        raise HTTPException(status_code=404, detail="선택된 캐릭터가 없습니다.")
+    if has_active_battle(db, character.actor_id):
+        raise HTTPException(status_code=400, detail="전투 중에는 크래프팅을 할 수 없습니다.")
+
+    method = (payload.method or "").upper().strip()
+    if not method:
+        raise HTTPException(status_code=400, detail="조합 방법을 선택해주세요.")
+
+    ensure_default_crafting_methods(db)
+    method_row = db.query(CraftingMethodModel).filter(CraftingMethodModel.method == method).first()
+    if not method_row:
+        raise HTTPException(status_code=400, detail="존재하지 않는 조합 방법입니다.")
+
+    item1 = db.query(ItemModel).filter(ItemModel.id == payload.ingredient1_id).first()
+    item2 = db.query(ItemModel).filter(ItemModel.id == payload.ingredient2_id).first()
+    if not item1 or not item2:
+        raise HTTPException(status_code=404, detail="재료 아이템을 찾을 수 없습니다.")
+
+    owned1 = get_owned_inventory_item(db, character.actor_id, payload.ingredient1_id)
+    owned2 = get_owned_inventory_item(db, character.actor_id, payload.ingredient2_id)
+    if not owned1 or not owned2:
+        raise HTTPException(status_code=400, detail="현재 캐릭터 인벤토리에 없는 재료입니다.")
+    inv_item1, _, _ = owned1
+    inv_item2, _, _ = owned2
+
+    if payload.ingredient1_id == payload.ingredient2_id:
+        if inv_item1.quantity < 2:
+            raise HTTPException(status_code=400, detail="같은 재료 2개를 조합하려면 수량이 2개 이상 필요합니다.")
+    else:
+        if inv_item1.quantity < 1 or inv_item2.quantity < 1:
+            raise HTTPException(status_code=400, detail="재료 수량이 부족합니다.")
+
+    ingredient1_id, ingredient2_id = normalize_crafting_ingredients(payload.ingredient1_id, payload.ingredient2_id)
+    normalized_item1 = db.query(ItemModel).filter(ItemModel.id == ingredient1_id).first()
+    normalized_item2 = db.query(ItemModel).filter(ItemModel.id == ingredient2_id).first()
+    recipe = db.query(CraftingRecipeModel).filter(
+        CraftingRecipeModel.ingredient1_id == ingredient1_id,
+        CraftingRecipeModel.ingredient2_id == ingredient2_id,
+        CraftingRecipeModel.method == method,
+    ).first()
+
+    created_new_recipe = False
+    ai_debug = None
+    try:
+        if recipe:
+            result_item = db.query(ItemModel).filter(ItemModel.id == recipe.result_item_id).first()
+            if not result_item:
+                raise HTTPException(status_code=500, detail="레시피 결과 아이템이 존재하지 않습니다.")
+        else:
+            result_item, _, _, _, ai_debug = create_generated_crafting_result(db, normalized_item1, normalized_item2, method)
+            recipe = CraftingRecipeModel(
+                ingredient1_id=ingredient1_id,
+                ingredient2_id=ingredient2_id,
+                method=method,
+                result_item_id=result_item.id,
+                created_by_ai=True,
+            )
+            db.add(recipe)
+            db.flush()
+            created_new_recipe = True
+
+        # 재료 차감. 같은 재료를 두 번 쓰는 경우 같은 InventoryItem에서 2개 차감한다.
+        if payload.ingredient1_id == payload.ingredient2_id:
+            inv_item1.quantity -= 2
+            if inv_item1.quantity <= 0:
+                db.delete(inv_item1)
+        else:
+            inv_item1.quantity -= 1
+            inv_item2.quantity -= 1
+            if inv_item1.quantity <= 0:
+                db.delete(inv_item1)
+            if inv_item2.quantity <= 0:
+                db.delete(inv_item2)
+
+        result_inv = add_item_to_character_inventory(db, character.actor_id, result_item.id, 1)
+        db.add(CraftingLogModel(
+            char_id=character.actor_id,
+            recipe_id=recipe.id,
+            ingredient1_id=ingredient1_id,
+            ingredient2_id=ingredient2_id,
+            method=method,
+            result_item_id=result_item.id,
+        ))
+        quest_updates = update_quest_progress(db, character.actor_id, "CRAFT_ITEM", result_item.id, 1)
+        db.commit()
+
+        return {
+            "message": "새 조합을 발견했습니다." if created_new_recipe else "기존 레시피로 제작했습니다.",
+            "created_new_recipe": created_new_recipe,
+            "recipe": serialize_crafting_recipe(db, recipe),
+            "result_item": {
+                "item_id": result_item.id,
+                "name": result_item.name,
+                "description": result_item.description,
+                "type": result_item.type,
+                "sub_type": result_item.sub_type,
+                "current_quantity": result_inv.quantity,
+            },
+            "quest_updates": quest_updates,
+            "ai_debug": ai_debug if created_new_recipe else {
+                "is_ai_generated": False,
+                "recipe_source": "cached_recipe",
+                "message": "이미 DB에 저장된 레시피를 재사용했습니다. AI 모델을 다시 실행하지 않았습니다.",
+            },
+        }
+    except Exception as exc:
+        db.rollback()
+        if isinstance(exc, HTTPException):
+            raise exc
+        raise HTTPException(status_code=500, detail=f"크래프팅 실패: {exc}")
+
+
+# =========================
 # Admin: users / items
 # =========================
 @app.get("/admin/characters", tags=["Admin"])
@@ -1928,6 +2551,121 @@ def admin_grant_item_to_character(
             raise exc
         raise HTTPException(status_code=500, detail=f"아이템 지급 실패: {exc}")
 
+
+
+
+@app.get("/admin/battles", tags=["Admin"])
+def admin_get_battles(
+    status_filter: Optional[str] = None,
+    char_id: Optional[int] = None,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(BattleSessionModel, CharacterModel.character_name)
+        .join(CharacterModel, BattleSessionModel.char_id == CharacterModel.actor_id)
+    )
+    if status_filter and status_filter != "ALL":
+        query = query.filter(BattleSessionModel.status == status_filter)
+    if char_id:
+        query = query.filter(BattleSessionModel.char_id == char_id)
+    rows = query.order_by(BattleSessionModel.started_at.desc(), BattleSessionModel.id.desc()).limit(100).all()
+    return [
+        {
+            "battle_id": battle.id,
+            "char_id": battle.char_id,
+            "character_name": character_name,
+            "monster_id": battle.monster_id,
+            "current_monster_hp": battle.current_monster_hp,
+            "status": battle.status,
+            "reward_claimed": battle.reward_claimed,
+            "started_at": str(battle.started_at) if battle.started_at else None,
+            "ended_at": str(battle.ended_at) if battle.ended_at else None,
+        }
+        for battle, character_name in rows
+    ]
+
+
+@app.patch("/admin/battles/{battle_id}/status", tags=["Admin"])
+def admin_update_battle_status(
+    battle_id: int,
+    payload: AdminBattleStatusUpdate,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    battle = db.query(BattleSessionModel).filter(BattleSessionModel.id == battle_id).first()
+    if not battle:
+        raise HTTPException(status_code=404, detail="전투 세션을 찾을 수 없습니다.")
+    new_status = (payload.status or "ABANDONED").upper()
+    if new_status not in {"ACTIVE", "WON", "FAILED", "ABANDONED"}:
+        raise HTTPException(status_code=400, detail="허용되지 않는 전투 상태입니다.")
+    battle.status = new_status
+    if new_status != "ACTIVE":
+        battle.ended_at = func.now()
+    db.commit()
+    return {"message": "전투 세션 상태를 변경했습니다.", "battle_id": battle.id, "status": battle.status}
+
+
+@app.get("/admin/monsters", tags=["Admin"])
+def admin_get_monsters(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    monsters = db.query(MonsterModel).order_by(MonsterModel.actor_id.asc()).all()
+    return [
+        {
+            "actor_id": monster.actor_id,
+            "name": f"Monster #{monster.actor_id}",
+            "hp": monster.hp,
+            "atk": monster.atk,
+            "def": monster.def_,
+            "drop_reward_id": monster.drop_reward_id,
+        }
+        for monster in monsters
+    ]
+
+
+@app.get("/admin/quests", tags=["Admin"])
+def admin_get_quests(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    quests = db.query(QuestModel).order_by(QuestModel.id.asc()).all()
+    result = []
+    for quest in quests:
+        objectives = db.query(QuestObjectiveModel).filter(QuestObjectiveModel.quest_id == quest.id).all()
+        result.append({
+            "id": quest.id,
+            "name": quest.name,
+            "type": quest.type,
+            "is_repeatable": quest.is_repeatable,
+            "reward_id": quest.reward_id,
+            "objectives": [
+                {
+                    "objective_type": obj.objective_type,
+                    "target_id": obj.target_id,
+                    "required_count": obj.required_count,
+                }
+                for obj in objectives
+            ],
+        })
+    return result
+
+
+@app.get("/admin/recipes", tags=["Admin"])
+def admin_get_recipes(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    try:
+        rows = db.execute(text(
+            """
+            SELECT cr.id, cr.ingredient1_id, i1.name AS ingredient1_name,
+                   cr.ingredient2_id, i2.name AS ingredient2_name,
+                   cr.method, cr.result_item_id, r.name AS result_item_name,
+                   cr.created_by_ai, cr.created_at
+            FROM CraftingRecipe cr
+            LEFT JOIN Item i1 ON cr.ingredient1_id = i1.id
+            LEFT JOIN Item i2 ON cr.ingredient2_id = i2.id
+            LEFT JOIN Item r ON cr.result_item_id = r.id
+            ORDER BY cr.id DESC
+            LIMIT 100
+            """
+        )).mappings().all()
+        return [dict(row) for row in rows]
+    except Exception:
+        return []
 
 # =========================
 # Compatibility endpoints from old prototype
