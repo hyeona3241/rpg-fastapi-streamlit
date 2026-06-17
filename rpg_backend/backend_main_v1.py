@@ -421,6 +421,12 @@ class SpecimenResponse(BaseModel):
     description: Optional[str] = None
 
 
+class JobResponse(BaseModel):
+    type: str
+    name: str
+    description: Optional[str] = None
+
+
 class SpecimenInput(BaseModel):
     type: str
     fraction: float = Field(gt=0, le=1)
@@ -429,6 +435,7 @@ class SpecimenInput(BaseModel):
 class CharacterCreate(BaseModel):
     character_name: str
     specimens: List[SpecimenInput] = Field(default_factory=list)
+    job_type: Optional[str] = None
 
 
 class CharacterResponse(BaseModel):
@@ -469,7 +476,7 @@ def get_active_character(db: Session, user_id: str) -> CharacterModel | None:
     ).first()
 
 
-def calculate_initial_stats(db: Session, specimens: list[SpecimenInput]) -> dict[str, int]:
+def calculate_initial_stats(db: Session, specimens: list[SpecimenInput], job_type: str | None = None) -> dict[str, int]:
     stats: dict[str, float] = {}
 
     # Level 1 base stats
@@ -482,7 +489,61 @@ def calculate_initial_stats(db: Session, specimens: list[SpecimenInput]) -> dict
         for row in rows:
             stats[row.stat_type] = stats.get(row.stat_type, 0) + row.value * specimen.fraction
 
+    # Lightweight job bonus: keep this in application code so it works even if the
+    # legacy DB has no JobBaseStat table. It only affects initial stats.
+    for stat_type, value in get_job_initial_bonus(job_type).items():
+        stats[stat_type] = stats.get(stat_type, 0) + value
+
     return {stat_type: int(round(value)) for stat_type, value in stats.items()}
+
+
+def normalize_job_type(job_type: str | None) -> str | None:
+    if not job_type:
+        return None
+    return job_type.strip().upper()
+
+
+def get_job_initial_bonus(job_type: str | None) -> dict[str, int]:
+    job = normalize_job_type(job_type)
+    # Common aliases are included because seed data may use either Korean labels or
+    # English enum-like values depending on which SQL file was used.
+    if job in {"WARRIOR", "KNIGHT", "FIGHTER", "전사", "기사"}:
+        return {"ATK": 5, "DEF": 3, "MAX_HP": 15, "HP": 15}
+    if job in {"MAGE", "WIZARD", "SORCERER", "마법사", "법사"}:
+        return {"INT": 7, "MAX_MP": 20, "MP": 20}
+    if job in {"ROGUE", "ASSASSIN", "THIEF", "도적", "암살자"}:
+        return {"AGI": 6, "ATK": 3}
+    if job in {"ARCHER", "RANGER", "궁수"}:
+        return {"AGI": 4, "ATK": 4}
+    return {}
+
+
+def get_job_skill_keywords(job_type: str | None) -> list[str]:
+    job = normalize_job_type(job_type)
+    if job in {"WARRIOR", "KNIGHT", "FIGHTER", "전사", "기사"}:
+        return ["slash", "strike", "power", "검", "베기", "강타"]
+    if job in {"MAGE", "WIZARD", "SORCERER", "마법사", "법사"}:
+        return ["fire", "magic", "ice", "bolt", "마법", "화염", "파이어", "얼음"]
+    if job in {"ROGUE", "ASSASSIN", "THIEF", "도적", "암살자"}:
+        return ["stab", "poison", "shadow", "독", "암습", "찌르기"]
+    if job in {"ARCHER", "RANGER", "궁수"}:
+        return ["arrow", "shot", "wind", "화살", "사격", "바람"]
+    return []
+
+
+def get_initial_skills_for_job(db: Session, job_type: str | None) -> list[SkillModel]:
+    skills = db.query(SkillModel).filter(SkillModel.unlock_condition_id.is_(None)).all()
+    keywords = get_job_skill_keywords(job_type)
+    if keywords:
+        matched = []
+        for skill in db.query(SkillModel).all():
+            text_value = f"{skill.name or ''} {skill.description or ''}".lower()
+            if any(keyword.lower() in text_value for keyword in keywords):
+                matched.append(skill)
+        for skill in matched:
+            if skill not in skills:
+                skills.append(skill)
+    return skills
 
 
 def get_or_create_basic_inventory(db: Session, char_id: int) -> InventoryModel:
@@ -1331,6 +1392,11 @@ def get_specimens(db: Session = Depends(get_db)):
     return db.query(SpecimenModel).order_by(SpecimenModel.type).all()
 
 
+@app.get("/jobs", response_model=List[JobResponse], tags=["Jobs"])
+def get_jobs(db: Session = Depends(get_db)):
+    return db.query(JobModel).order_by(JobModel.type).all()
+
+
 @app.get("/characters/me", response_model=List[CharacterResponse], tags=["Characters"])
 def get_my_characters(current_user=Depends(require_user), db: Session = Depends(get_db)):
     return db.query(CharacterModel).filter(CharacterModel.user_id == current_user["id"]).order_by(CharacterModel.actor_id).all()
@@ -1360,6 +1426,17 @@ def create_character(char_data: CharacterCreate, current_user=Depends(require_us
         if specimen.type not in valid_specimen_types:
             raise HTTPException(status_code=400, detail=f"존재하지 않는 종족입니다: {specimen.type}")
 
+    selected_job_type = normalize_job_type(char_data.job_type)
+    if selected_job_type:
+        selected_job = db.query(JobModel).filter(JobModel.type == selected_job_type).first()
+        if not selected_job:
+            raise HTTPException(status_code=400, detail=f"존재하지 않는 직업입니다: {selected_job_type}")
+    else:
+        selected_job = db.query(JobModel).filter(JobModel.type.in_(["BEGINNER", "NOVICE"])).first()
+        if not selected_job:
+            selected_job = db.query(JobModel).first()
+        selected_job_type = selected_job.type if selected_job else None
+
     try:
         actor = ActorModel()
         db.add(actor)
@@ -1380,24 +1457,25 @@ def create_character(char_data: CharacterCreate, current_user=Depends(require_us
         for specimen in char_data.specimens:
             db.add(CharacterSpecimenModel(char_id=actor.id, type=specimen.type, fraction=specimen.fraction))
 
-        # Basic job: use BEGINNER/NOVICE if present, otherwise first job row.
-        job = db.query(JobModel).filter(JobModel.type.in_(["BEGINNER", "NOVICE"])).first()
-        if not job:
-            job = db.query(JobModel).first()
-        if job:
-            db.add(CharacterJobModel(type=job.type, char_id=actor.id, active=True))
+        # Initial job: selected by the user. Fallback to BEGINNER/NOVICE when omitted.
+        if selected_job_type:
+            db.add(CharacterJobModel(type=selected_job_type, char_id=actor.id, active=True))
 
-        # Initial stats
-        initial_stats = calculate_initial_stats(db, char_data.specimens)
+        # Initial stats include level/specimen stats and a lightweight job bonus.
+        initial_stats = calculate_initial_stats(db, char_data.specimens, selected_job_type)
         for stat_type, value in initial_stats.items():
             db.add(ActorStatModel(actor_id=actor.id, stat_type=stat_type, value=value))
 
         # Basic inventory
         db.add(InventoryModel(owner_id=actor.id, type="BASIC", capacity=20))
 
-        # Basic skills: initially give skills with no unlock condition.
-        basic_skills = db.query(SkillModel).filter(SkillModel.unlock_condition_id.is_(None)).all()
+        # Basic skills plus job-themed skills when matching names/descriptions exist.
+        basic_skills = get_initial_skills_for_job(db, selected_job_type)
+        seen_skill_ids = set()
         for skill in basic_skills:
+            if skill.id in seen_skill_ids:
+                continue
+            seen_skill_ids.add(skill.id)
             db.add(CharacterSkillModel(skill_id=skill.id, char_id=actor.id, skill_level=0.0))
 
         db.commit()
@@ -1448,6 +1526,59 @@ def get_current_character_resources(current_user=Depends(require_user), db: Sess
     }
 
 
+@app.get("/characters/public/search", tags=["Characters"])
+def search_public_characters(
+    name: Optional[str] = None,
+    job_type: Optional[str] = None,
+    specimen_type: Optional[str] = None,
+    min_level: Optional[int] = None,
+    max_level: Optional[int] = None,
+    current_user=Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(CharacterModel).filter(CharacterModel.is_public == True)  # noqa: E712
+
+    if name:
+        query = query.filter(CharacterModel.character_name.like(f"%{name.strip()}%"))
+    if min_level is not None:
+        query = query.filter(CharacterModel.level >= min_level)
+    if max_level is not None:
+        query = query.filter(CharacterModel.level <= max_level)
+    if job_type:
+        query = query.join(CharacterJobModel, CharacterJobModel.char_id == CharacterModel.actor_id).filter(
+            CharacterJobModel.active == True,  # noqa: E712
+            CharacterJobModel.type == normalize_job_type(job_type),
+        )
+    if specimen_type:
+        query = query.join(CharacterSpecimenModel, CharacterSpecimenModel.char_id == CharacterModel.actor_id).filter(
+            CharacterSpecimenModel.type == specimen_type
+        )
+
+    characters = query.order_by(CharacterModel.level.desc(), CharacterModel.character_name.asc()).limit(100).all()
+    results = []
+    for character in characters:
+        active_job = (
+            db.query(CharacterJobModel, JobModel)
+            .join(JobModel, JobModel.type == CharacterJobModel.type)
+            .filter(CharacterJobModel.char_id == character.actor_id, CharacterJobModel.active == True)  # noqa: E712
+            .first()
+        )
+        specimens = db.query(CharacterSpecimenModel).filter(CharacterSpecimenModel.char_id == character.actor_id).all()
+        results.append({
+            "actor_id": character.actor_id,
+            "character_name": character.character_name,
+            "level": character.level,
+            "exp": character.exp,
+            "job_type": active_job[0].type if active_job else None,
+            "job_name": active_job[1].name if active_job else None,
+            "specimens": [
+                {"type": s.type, "fraction": s.fraction}
+                for s in specimens
+            ],
+        })
+    return results
+
+
 @app.get("/characters/{char_id}", tags=["Characters"])
 def get_character_detail(char_id: int, current_user=Depends(require_user), db: Session = Depends(get_db)):
     character = db.query(CharacterModel).filter(CharacterModel.actor_id == char_id).first()
@@ -1457,6 +1588,12 @@ def get_character_detail(char_id: int, current_user=Depends(require_user), db: S
         raise HTTPException(status_code=403, detail="비공개 캐릭터입니다.")
 
     specimens = db.query(CharacterSpecimenModel).filter(CharacterSpecimenModel.char_id == char_id).all()
+    jobs = (
+        db.query(CharacterJobModel, JobModel)
+        .join(JobModel, JobModel.type == CharacterJobModel.type)
+        .filter(CharacterJobModel.char_id == char_id)
+        .all()
+    )
     stats = db.query(ActorStatModel).filter(ActorStatModel.actor_id == char_id).all()
     final_stats = get_final_stats(db, char_id)
     equipment = get_equipped_items(db, char_id)
@@ -1477,6 +1614,15 @@ def get_character_detail(char_id: int, current_user=Depends(require_user), db: S
             "is_public": character.is_public,
         },
         "specimens": [{"type": s.type, "fraction": s.fraction} for s in specimens],
+        "jobs": [
+            {
+                "type": cj.type,
+                "name": job.name,
+                "description": job.description,
+                "active": cj.active,
+            }
+            for cj, job in jobs
+        ],
         "stats": {s.stat_type: s.value for s in stats},
         "final_stats": final_stats,
         "equipment": equipment,

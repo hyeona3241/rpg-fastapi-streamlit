@@ -41,6 +41,13 @@ def load_specimens():
     return res.json()
 
 
+def load_jobs():
+    res = request("GET", "/jobs")
+    if res is None or res.status_code != 200:
+        return []
+    return res.json()
+
+
 def refresh_current_character_from_server():
     res = request("GET", "/characters/current")
     if res and res.status_code == 200:
@@ -107,8 +114,20 @@ with tab_list:
 with tab_create:
     st.subheader("새 캐릭터 생성")
     specimens = load_specimens()
+    jobs = load_jobs()
     with st.form("create_character_form"):
         name = st.text_input("캐릭터 이름")
+
+        selected_job_type = None
+        if jobs:
+            job_labels = {f"{j['name']} ({j['type']})": j['type'] for j in jobs}
+            selected_job_label = st.selectbox("초기 직업 선택", options=list(job_labels.keys()))
+            selected_job_type = job_labels[selected_job_label]
+            selected_job = next((j for j in jobs if j['type'] == selected_job_type), None)
+            if selected_job and selected_job.get("description"):
+                st.caption(selected_job.get("description"))
+        else:
+            st.info("직업 데이터가 없으면 서버에서 기본 직업을 자동 선택합니다.")
 
         specimen_payload = []
         if specimens:
@@ -137,7 +156,7 @@ with tab_create:
         elif abs(sum(s["fraction"] for s in specimen_payload) - 1.0) > 0.001:
             st.warning("종족 비율 합계가 100%가 아닙니다.")
         else:
-            res = request("POST", "/characters", json={"character_name": name, "specimens": specimen_payload})
+            res = request("POST", "/characters", json={"character_name": name, "specimens": specimen_payload, "job_type": selected_job_type})
             if res and res.status_code == 201:
                 st.success("캐릭터를 생성했습니다.")
                 st.rerun()
@@ -170,6 +189,14 @@ with tab_detail:
     st.divider()
     col_left, col_right = st.columns(2)
     with col_left:
+        st.write("직업")
+        jobs_df = pd.DataFrame(detail.get("jobs", []))
+        if not jobs_df.empty:
+            show_cols = [c for c in ["type", "name", "active", "description"] if c in jobs_df.columns]
+            st.dataframe(jobs_df[show_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("직업 정보가 없습니다.")
+
         st.write("종족 구성")
         specimens_df = pd.DataFrame(detail.get("specimens", []))
         if not specimens_df.empty:
