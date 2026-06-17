@@ -49,11 +49,30 @@ with left:
         st.warning("등록된 몬스터가 없습니다. populate SQL의 Monster 데이터를 확인해주세요.")
         st.stop()
 
-    monster_options = {f"[{m['actor_id']}] {m['name']} HP {m['hp']} / ATK {m['atk']} / DEF {m['def']}": m["actor_id"] for m in monsters}
+    monster_options = {
+        f"[{m['actor_id']}] {m['name']} Lv.{m.get('level', 1)} / HP {m['hp']} / ATK {m['atk']} / DEF {m['def']}": m["actor_id"]
+        for m in monsters
+    }
     selected_monster = st.selectbox("전투할 몬스터", list(monster_options.keys()))
+    selected_monster_id = monster_options[selected_monster]
+    selected_monster_data = next((m for m in monsters if m.get("actor_id") == selected_monster_id), None)
+    if selected_monster_data:
+        reward_preview = selected_monster_data.get("expected_reward") or {}
+        with st.container(border=True):
+            st.markdown(f"### 👹 {selected_monster_data.get('name')} Lv.{selected_monster_data.get('level', 1)}")
+            st.caption("처치 시 예상 보상")
+            st.write(f"EXP: **+{reward_preview.get('exp', 0)}**")
+            items = reward_preview.get("items") or []
+            if items:
+                for item in items:
+                    prob = item.get("drop_probability", 1.0)
+                    prob_text = f" ({int(prob * 100)}%)" if prob is not None else ""
+                    st.write(f"- {item.get('name')} × {item.get('quantity', 1)}{prob_text}")
+            else:
+                st.write("- 아이템 보상 없음")
 
     if st.button("전투 시작"):
-        start_res = request("POST", "/battle/start", json={"monster_id": monster_options[selected_monster]})
+        start_res = request("POST", "/battle/start", json={"monster_id": selected_monster_id})
         if start_res is not None and start_res.status_code == 200:
             battle = start_res.json()
             st.session_state.battle_id = battle.get("battle_id")
@@ -108,10 +127,22 @@ with right:
             st.progress(max(0.0, min(1.0, p_mp / p_max_mp)))
 
             st.markdown("### 몬스터")
-            st.write(f"**{monster.get('name')}**")
+            st.write(f"**👹 {monster.get('name')}** Lv.{monster.get('level', 1)}")
             st.progress(max(0.0, min(1.0, cur_hp / max_hp)))
             st.write(f"HP: {cur_hp} / {max_hp}")
             st.write(f"ATK: {monster.get('atk')} / DEF: {monster.get('def')}")
+            expected_reward = monster.get("expected_reward") or {}
+            with st.container(border=True):
+                st.caption("🎁 처치 시 예상 보상")
+                st.write(f"EXP: **+{expected_reward.get('exp', 0)}**")
+                reward_items = expected_reward.get("items") or []
+                if reward_items:
+                    for item in reward_items:
+                        prob = item.get("drop_probability", 1.0)
+                        prob_text = f" ({int(prob * 100)}%)" if prob is not None else ""
+                        st.write(f"- {item.get('name')} × {item.get('quantity', 1)}{prob_text}")
+                else:
+                    st.write("- 아이템 보상 없음")
 
             if battle_status == "ACTIVE":
                 st.markdown("### 공격")

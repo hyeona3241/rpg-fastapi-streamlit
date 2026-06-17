@@ -174,6 +174,10 @@ class MonsterModel(Base):
     atk = Column(Integer, nullable=False)
     def_ = Column("def", Integer, nullable=False)
     drop_reward_id = Column(Integer)
+    # Demo/UI columns added by patch_battle_monster_display.sql
+    name = Column(String(100))
+    description = Column(Text)
+    level = Column(Integer, nullable=False, default=1)
 
 
 class RewardItemModel(Base):
@@ -918,6 +922,36 @@ def update_quest_progress(db: Session, char_id: int, objective_type: str, target
     return updated
 
 
+def get_reward_preview(db: Session, reward_id: int | None) -> dict:
+    """Return expected reward information for UI only. Actual reward is granted at victory time."""
+    if not reward_id:
+        return {"reward_id": None, "exp": 0, "items": []}
+    exp_row = db.query(RewardExpModel).filter(RewardExpModel.reward_id == reward_id).first()
+    item_rows = db.query(RewardItemModel).filter(RewardItemModel.reward_id == reward_id).all()
+    items = []
+    for row in item_rows:
+        item = db.query(ItemModel).filter(ItemModel.id == row.item_id).first()
+        items.append({
+            "item_id": row.item_id,
+            "name": item.name if item else f"Item {row.item_id}",
+            "quantity": int(row.quantity or 1),
+            "drop_probability": float(row.drop_probability) if row.drop_probability is not None else 1.0,
+        })
+    return {
+        "reward_id": reward_id,
+        "exp": int(exp_row.amount if exp_row else 0),
+        "items": items,
+    }
+
+
+def get_monster_display_name(monster: MonsterModel | None, fallback_id: int | None = None) -> str:
+    if monster and getattr(monster, "name", None):
+        return monster.name
+    if monster:
+        return f"Monster #{monster.actor_id}"
+    return f"Monster #{fallback_id}" if fallback_id is not None else "Unknown Monster"
+
+
 def serialize_battle(db: Session, battle: BattleSessionModel) -> dict:
     monster = db.query(MonsterModel).filter(MonsterModel.actor_id == battle.monster_id).first()
     character = db.query(CharacterModel).filter(CharacterModel.actor_id == battle.char_id).first()
@@ -928,11 +962,13 @@ def serialize_battle(db: Session, battle: BattleSessionModel) -> dict:
         "reward_claimed": battle.reward_claimed,
         "monster": {
             "actor_id": monster.actor_id if monster else battle.monster_id,
-            "name": f"Monster #{battle.monster_id}",
+            "name": get_monster_display_name(monster, battle.monster_id),
+            "level": int(getattr(monster, "level", 1) or 1) if monster else 1,
             "max_hp": monster.hp if monster else 0,
             "current_hp": battle.current_monster_hp,
             "atk": monster.atk if monster else 0,
             "def": monster.def_ if monster else 0,
+            "expected_reward": get_reward_preview(db, monster.drop_reward_id if monster else None),
         },
         "character": {
             "actor_id": character.actor_id if character else battle.char_id,
@@ -2054,11 +2090,13 @@ def get_monsters(current_user=Depends(require_user), db: Session = Depends(get_d
     return [
         {
             "actor_id": monster.actor_id,
-            "name": f"Monster #{monster.actor_id}",
+            "name": get_monster_display_name(monster),
+            "level": int(getattr(monster, "level", 1) or 1),
             "hp": monster.hp,
             "atk": monster.atk,
             "def": monster.def_,
             "drop_reward_id": monster.drop_reward_id,
+            "expected_reward": get_reward_preview(db, monster.drop_reward_id),
         }
         for monster in monsters
     ]
@@ -2758,11 +2796,13 @@ def admin_get_monsters(current_user=Depends(require_admin), db: Session = Depend
     return [
         {
             "actor_id": monster.actor_id,
-            "name": f"Monster #{monster.actor_id}",
+            "name": get_monster_display_name(monster),
+            "level": int(getattr(monster, "level", 1) or 1),
             "hp": monster.hp,
             "atk": monster.atk,
             "def": monster.def_,
             "drop_reward_id": monster.drop_reward_id,
+            "expected_reward": get_reward_preview(db, monster.drop_reward_id),
         }
         for monster in monsters
     ]

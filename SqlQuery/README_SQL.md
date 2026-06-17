@@ -41,3 +41,27 @@ mysql -urpg -prpg MyRPG < 02_patch_existing_db_safe.sql
 - `QuestObjective`, `CharacterQuestProgress`
 - `ItemAttribute`, `ItemEffect`
 - `CraftingMethod`, `CraftingRecipe`, `CraftingLog`
+
+
+## 추가 파일
+
+### 04_patch_existing_db_demo_safe.sql
+기존 DB를 유지하면서 누락된 컬럼/테이블/테스트 데이터만 추가합니다.
+
+```bash
+mysql -urpg -prpg MyRPG < 02_patch_existing_db_demo_safe.sql
+```
+
+기존 플레이 데이터가 있는 경우에는 이 파일을 사용하는 것을 추천합니다.
+
+### 99_optional_drop_unused_legacy_tables.sql
+현재 앱에서 사용하지 않는 오래된 테이블을 삭제하는 선택 파일입니다.
+
+삭제 대상 예시:
+
+- RequirementLevel / RequirementSpecimen / RequirementJob / RequirementSkill / RequirementQuest
+- StatusEffect / CharacterStatusEffect
+- Shop / ShopCatalog / Villager / VillagerQuest
+- SkillBonusStat
+
+주의: 현재 앱에는 필요 없지만, 과거 과제나 다른 SQL 예제에서 쓸 수 있으므로 최종 제출 직전에만 검토해서 실행하세요.
